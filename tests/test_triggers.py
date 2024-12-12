@@ -192,6 +192,43 @@ class TestCronTrigger(object):
         correct_next_date = timezone.localize(datetime(2009, 1, 28))
         assert trigger.get_next_fire_time(None, start_date) == correct_next_date
 
+    def test_cron_weekday_positional_2(self, timezone):
+        trigger = CronTrigger(month='*/3', day='mon#1', hour='6', minute='0',
+                              standard='POSIX.1-2017', timezone=timezone)
+        assert repr(trigger) == ("<CronTrigger (month='*/3', day='1st mon', hour='6', minute='0', "
+                                 "standard='POSIX.1-2017', timezone='Europe/Berlin')>")
+        assert str(trigger) == "cron[month='*/3', day='1st mon', hour='6', minute='0']"
+        start_date = timezone.localize(datetime(2019, 7, 18))
+        correct_next_date = timezone.localize(datetime(2019, 10, 7, 6, 0, 0))
+        assert trigger.get_next_fire_time(None, start_date) == correct_next_date
+
+    def test_cron_weekday_step(self, timezone):
+        trigger = CronTrigger(year=2009, month=1, day_of_week='0-4/2', timezone=timezone)
+        assert repr(trigger) == ("<CronTrigger (year='2009', month='1', day_of_week='0-4/2', "
+                                 "timezone='Europe/Berlin')>")
+        assert str(trigger) == "cron[year='2009', month='1', day_of_week='0-4/2']"
+        start_date = timezone.localize(datetime(2009, 1, 1))
+        correct_next_date = timezone.localize(datetime(2009, 1, 2))
+        assert trigger.get_next_fire_time(None, start_date) == correct_next_date
+
+    def test_cron_weekday_name_step(self, timezone):
+        trigger = CronTrigger(year=2009, month=1, day_of_week='mon-fri/2', timezone=timezone)
+        assert repr(trigger) == ("<CronTrigger (year='2009', month='1', day_of_week='mon-fri/2', "
+                                 "timezone='Europe/Berlin')>")
+        assert str(trigger) == "cron[year='2009', month='1', day_of_week='mon-fri/2']"
+        start_date = timezone.localize(datetime(2009, 1, 1))
+        correct_next_date = timezone.localize(datetime(2009, 1, 2))
+        assert trigger.get_next_fire_time(None, start_date) == correct_next_date
+
+    def test_cron_month_name_range_step(self, timezone):
+        trigger = CronTrigger(year=2009, month='feb-aug/3', timezone=timezone)
+        assert repr(trigger) == ("<CronTrigger (year='2009', month='feb-aug/3', "
+                                 "timezone='Europe/Berlin')>")
+        assert str(trigger) == "cron[year='2009', month='feb-aug/3']"
+        start_date = timezone.localize(datetime(2009, 1, 1))
+        correct_next_date = timezone.localize(datetime(2009, 2, 1))
+        assert trigger.get_next_fire_time(None, start_date) == correct_next_date
+
     def test_week_1(self, timezone):
         trigger = CronTrigger(year=2009, month=2, week=8, timezone=timezone)
         assert repr(trigger) == ("<CronTrigger (year='2009', month='2', week='8', "
@@ -371,10 +408,21 @@ class TestCronTrigger(object):
         (dict(hour='0-24'), r"Error validating expression '0-24': the last value \(24\) is higher "
                             r"than the maximum value \(23\)"),
         (dict(day='0-3'), r"Error validating expression '0-3': the first value \(0\) is lower "
-                          r"than the minimum value \(1\)")
-    ], ids=['too_large_step_all', 'too_large_step_range', 'too_high_last', 'too_low_first'])
-    def test_invalid_ranges(self, values, expected):
+                          r"than the minimum value \(1\)"),
+        (dict(day='lasts'), r'Unrecognized expression "lasts" for field "day"'),
+        (dict(day='3rd mon here'), r'Unrecognized expression "3rd mon here" for field "day"')
+    ], ids=['too_large_step_all', 'too_large_step_range', 'too_high_last', 'too_low_first',
+            'invalid_day_lasts', 'invalid_weekday_position'])
+    def test_invalid_parameters(self, values, expected):
         pytest.raises(ValueError, CronTrigger, **values).match(expected)
+
+    @pytest.mark.parametrize('values, expected', [
+        (dict(expr='* * 1-10 * mon#2'),
+         r"Conflict: day_of_week expression 'mon#2' would go into "
+         r"the day field, which already have the expression '1-10'")
+    ], ids=['conflicting_days'])
+    def test_invalid_crontab_parameters(self, values, expected):
+        pytest.raises(ValueError, CronTrigger.from_crontab, **values).match(expected)
 
     @pytest.mark.parametrize('expr, expected_repr', [
         ('* * * * *',
@@ -385,11 +433,69 @@ class TestCronTrigger(object):
          "timezone='Europe/Berlin')>"),
         (' 0-14   * 14-28   jul       fri',
          "<CronTrigger (month='jul', day='14-28', day_of_week='fri', hour='*', minute='0-14', "
-         "timezone='Europe/Berlin')>")
-    ], ids=['always', 'assorted', 'multiple_spaces_in_format'])
+         "timezone='Europe/Berlin')>"),
+        ('@yearly',
+         "<CronTrigger (month='1', day='1', day_of_week='*', hour='0', minute='0', "
+         "timezone='Europe/Berlin')>"),
+        ('@monthly',
+         "<CronTrigger (month='*', day='1', day_of_week='*', hour='0', minute='0', "
+         "timezone='Europe/Berlin')>"),
+        ('@weekly',
+         "<CronTrigger (month='*', day='*', day_of_week='0', hour='0', minute='0', "
+         "timezone='Europe/Berlin')>"),
+        ('@daily',
+         "<CronTrigger (month='*', day='*', day_of_week='*', hour='0', minute='0', "
+         "timezone='Europe/Berlin')>"),
+        ('@hourly',
+         "<CronTrigger (month='*', day='*', day_of_week='*', hour='*', minute='0', "
+         "timezone='Europe/Berlin')>"),
+        ('20 ? 1 ? ?',
+         "<CronTrigger (day='1', minute='20', "
+         "timezone='Europe/Berlin')>"),
+        ('? ? L ? ?',
+         "<CronTrigger (day='last', timezone='Europe/Berlin')>"),
+        ('? ? ? ? mon#1',
+         "<CronTrigger (day='1st mon', timezone='Europe/Berlin')>"),
+        ('? ? ? ? 2#L',
+         "<CronTrigger (day='last wed', timezone='Europe/Berlin')>")
+    ], ids=['always', 'assorted', 'multiple_spaces_in_format',
+            'yearly', 'monthly', 'weekly', 'daily', 'hourly',
+            'omitted_fields', 'last_day_in_month', 'first_monday',
+            'last_wednesday'])
     def test_from_crontab(self, expr, expected_repr, timezone):
         trigger = CronTrigger.from_crontab(expr, timezone)
         assert repr(trigger) == expected_repr
+
+    @pytest.mark.parametrize('expr, expected_repr', [
+        ('* * * * *',
+         "<CronTrigger (month='*', day='*', day_of_week='*', hour='*', minute='*', "
+         "standard='POSIX.1-2017', timezone='Europe/Berlin')>"),
+    ], ids=['always'])
+    def test_from_crontab_strict(self, expr, expected_repr, timezone):
+        trigger = CronTrigger.from_crontab(expr, timezone, strict=True)
+        assert repr(trigger) == expected_repr
+
+    @pytest.mark.parametrize('expr, expected_str, next_date', [
+        ('0 8 ? feb wed',
+         "cron[month='feb', day_of_week='wed', hour='8', minute='0']",
+         (2019, 2, 6, 8, 0, 0)),
+        ('0 8 10-20 feb fri',
+         "cron[month='feb', day='10-20', day_of_week='fri', hour='8', minute='0']",
+         (2019, 2, 1, 8, 0, 0)),
+        ('0 8 5-10 feb thu',
+         "cron[month='feb', day='5-10', day_of_week='thu', hour='8', minute='0']",
+         (2019, 2, 5, 8, 0, 0)),
+        ('0 8 * mar 1-5',
+         "cron[month='mar', day='*', day_of_week='1-5', hour='8', minute='0']",
+         (2019, 3, 1, 8, 0, 0))
+    ], ids=['any wednesday', 'day 10-20 and fridays', 'day 5-10 and thursdays',
+            'weekdays-offset'])
+    def test_from_crontab_strict_weekdays(self, expr, expected_str, next_date, timezone):
+        trigger = CronTrigger.from_crontab(expr, timezone=timezone, strict=True)
+        assert str(trigger) == expected_str
+        start_date = timezone.localize(datetime(2019, 1, 1))
+        correct_next_date = timezone.localize(datetime(*next_date))
+        assert trigger.get_next_fire_time(None, start_date) == correct_next_date
 
 
 class TestDateTrigger(object):
